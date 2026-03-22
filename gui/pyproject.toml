@@ -1,0 +1,5 @@
+[project]
+name = "nypia"
+
+[tool.pyside6-project]
+files = ["widget.py"]
