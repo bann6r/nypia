@@ -1,0 +1,23 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bann6r/nypia/refs/heads/main/nypia_logo_dark.svg" width="90"/>
+</p>
+<h1 align="center">nypia</h1>
+<p align="center">vietnamese input method for linux</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bann6r/nypia/refs/heads/main/screenshots/launcher.png" width="90"/>
+
+## about
+nypia is a free and open-source vietnamese input method. its also an alternative to typing vietnamese on linux
+
+## contributing
+contributions are welcome! feel free to fork, edit and open a pr
+
+## license
+nypia is licensed under gpl v3. see LICENSE for more details
+
+## status
+currently nypia is still in pre-alpha and not ready for production use, the goal is to:
+- make an engine since the program is just gui
+
+&copy; 2026 bann6r. all rights reserved
