@@ -17,7 +17,6 @@ contributions are welcome! feel free to fork, edit and open a pr
 nypia is licensed under gpl v3. see LICENSE for more details
 
 ## status
-currently nypia is still in pre-alpha and not ready for production use, the goal is to:
-- make an engine since the program is just gui
+nypia is now abandoned. use ibus-unikey as an alt
 
 &copy; 2026 bann6r. all rights reserved
