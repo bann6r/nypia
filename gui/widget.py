@@ -3,17 +3,25 @@ import os
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QRadioButton, QPushButton,
-    QButtonGroup, QSystemTrayIcon
+    QButtonGroup, QSystemTrayIcon, QMenu, QMessageBox
 )
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QIcon, QPixmap, QPainter
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SVG_NORMAL      = os.path.join(BASE_DIR, "nypia_logo_dark.svg")
-SVG_ACTIVATED   = os.path.join(BASE_DIR, "nypia_activated.svg")
-ICON_DIR        = os.path.join(BASE_DIR, "icon")
+SVG_NORMAL    = os.path.join(BASE_DIR, "nypia_logo_dark.svg")
+SVG_ACTIVATED = os.path.join(BASE_DIR, "nypia_activated.svg")
+ICON_DIR      = os.path.join(BASE_DIR, "icon")
+
+try:
+    sys.path.insert(0, BASE_DIR)
+    from engine import NypiaHook, EVDEV_OK
+    ENGINE_AVAILABLE = True
+except Exception:
+    ENGINE_AVAILABLE = False
+    EVDEV_OK = False
 
 STYLE = """
 QWidget {
@@ -81,10 +89,19 @@ def svg_to_icon(svg_path):
     return QIcon(pixmap)
 
 
+class EngineSignalBridge(QObject):
+    mode_changed = Signal(bool)
+
+
 class NypiaApp(QWidget):
     def __init__(self, tray):
         super().__init__()
         self.tray = tray
+        self._engine_active = False
+        self._hook = None
+        self._bridge = EngineSignalBridge()
+        self._bridge.mode_changed.connect(self._on_mode_changed)
+
         self.setWindowTitle("nypia v0.1")
         self.setFixedWidth(400)
         self.setMinimumHeight(224)
@@ -99,9 +116,9 @@ class NypiaApp(QWidget):
 
         logo_row = QHBoxLayout()
         logo_row.setAlignment(Qt.AlignHCenter)
-        svg = QSvgWidget(SVG_NORMAL)
-        svg.setFixedSize(70, 70)
-        logo_row.addWidget(svg)
+        self.svg_logo = QSvgWidget(SVG_NORMAL)
+        self.svg_logo.setFixedSize(70, 70)
+        logo_row.addWidget(self.svg_logo)
         root.addLayout(logo_row)
         root.addSpacing(14)
 
@@ -131,80 +148,161 @@ class NypiaApp(QWidget):
         row3.setAlignment(Qt.AlignHCenter)
         row3.setSpacing(10)
         lbl3 = QLabel("switch key:")
-        rb1 = QRadioButton("ctrl+shift")
-        rb2 = QRadioButton("alt+z")
-        rb1.setChecked(True)
+        self.rb_ctrl_shift = QRadioButton("ctrl+shift")
+        self.rb_alt_z = QRadioButton("alt+z")
+        self.rb_ctrl_shift.setChecked(True)
         group = QButtonGroup(self)
-        group.addButton(rb1)
-        group.addButton(rb2)
+        group.addButton(self.rb_ctrl_shift)
+        group.addButton(self.rb_alt_z)
         row3.addWidget(lbl3)
-        row3.addWidget(rb1)
-        row3.addWidget(rb2)
+        row3.addWidget(self.rb_ctrl_shift)
+        row3.addWidget(self.rb_alt_z)
         root.addLayout(row3)
         root.addSpacing(12)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-
         icon_map = {
             "start":   "enable.svg",
             "exit":    "exit.svg",
             "setting": "settings.svg",
             "about":   "about.svg",
         }
-
         self.btn_refs = {}
         for label in ["start", "exit", "setting", "about"]:
             btn = QPushButton()
             btn.setFixedHeight(36)
-
             inner = QHBoxLayout(btn)
             inner.setContentsMargins(8, 0, 8, 0)
             inner.setSpacing(8)
-
             icon_widget = QSvgWidget(os.path.join(ICON_DIR, icon_map[label]))
             icon_widget.setFixedSize(18, 18)
             inner.addWidget(icon_widget)
-
             txt = QLabel(label)
             txt.setStyleSheet("color: white; background: transparent;")
             inner.addWidget(txt)
             inner.addStretch()
-
             btn_row.addWidget(btn)
             self.btn_refs[label] = btn
 
         root.addLayout(btn_row)
-
         self.btn_refs["start"].clicked.connect(self._on_start)
         self.btn_refs["exit"].clicked.connect(self._on_exit)
+        self.btn_refs["about"].clicked.connect(self._on_about)
+
+    def _on_mode_changed(self, viet):
+        self.tray.set_viet(viet)
+        self.svg_logo.load(SVG_ACTIVATED if viet else SVG_NORMAL)
+
+    def _get_switch_key(self):
+        return 'alt+z' if self.rb_alt_z.isChecked() else 'ctrl+shift'
 
     def _on_start(self):
-        self.tray.setIcon(svg_to_icon(SVG_ACTIVATED))
-        self.tray.activated_state = True
+        if self._engine_active:
+            self.hide()
+            return
+
+        if not ENGINE_AVAILABLE:
+            QMessageBox.warning(self, "error", "engine module not found\ndid you just deleted the engine?")
+            return
+
+        if not EVDEV_OK:
+            QMessageBox.warning(self, "missing dependency",
+                "evdev is not installed.\n\n"
+                "install it:\n"
+                "  pip install evdev\n"
+                "    or\n"
+                "  sudo dnf install python3-evdev\n\n"
+                "also make sure you are in the 'input' group:\n"
+                "  sudo usermod -aG input $USER\n"
+                "(re-login after)")
+            return
+
+        self._hook = NypiaHook(
+            on_mode_change=lambda viet: self._bridge.mode_changed.emit(viet),
+            switch_key=self._get_switch_key(),
+        )
+        ok, err = self._hook.start()
+        if not ok:
+            QMessageBox.warning(self, "engine error", err)
+            self._hook = None
+            return
+
+        self._engine_active = True
+        self._hook.set_viet_mode(True)   # start in VN mode
         self.hide()
 
     def _on_exit(self):
+        if self._hook:
+            self._hook.stop()
         QApplication.quit()
+
+    def _on_about(self):
+        QMessageBox.about(self, "about nypia",
+            "nypia v0.1\n"
+            "vietnamese input method for linux\n\n"
+            "github: github.com/bann6r/nypia\nsourceforge: sourceforge.net/projects/nypia\n\n"
+            "© 2026 bann6r\n"
+            "this program is licensed under gnu gpl v3")
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
 
 
 class NypiaTray(QSystemTrayIcon):
     def __init__(self):
         super().__init__()
-        self.activated_state = False
+        self._viet = False
+        self._app_win = None
         self.setIcon(svg_to_icon(SVG_NORMAL))
-        self.setToolTip("nypia")
+        self.setToolTip("nypia  [EN]")
         self.setVisible(True)
         self.activated.connect(self._on_click)
+        self._build_menu()
+
+    def set_app_win(self, win):
+        self._app_win = win
+
+    def _build_menu(self):
+        menu = QMenu()
+        self._act_toggle = menu.addAction("switch to vietnamese")
+        self._act_toggle.triggered.connect(self._toggle_from_menu)
+        menu.addSeparator()
+        menu.addAction("setting").triggered.connect(self._show_window)
+        menu.addAction("exit").triggered.connect(QApplication.quit)
+        self.setContextMenu(menu)
+
+    def set_viet(self, viet):
+        self._viet = viet
+        if viet:
+            self.setIcon(svg_to_icon(SVG_ACTIVATED))
+            self.setToolTip("nypia [vn]")
+            self._act_toggle.setText("switch to english")
+        else:
+            self.setIcon(svg_to_icon(SVG_NORMAL))
+            self.setToolTip("nypia [en]")
+            self._act_toggle.setText("switch to vietnamese")
+
+    def _toggle_from_menu(self):
+        if self._app_win and self._app_win._hook:
+            self._app_win._hook.toggle()
+
+    def _show_window(self):
+        if self._app_win:
+            self._app_win.show()
+            self._app_win.raise_()
+            self._app_win.activateWindow()
 
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if self.activated_state:
-                self.setIcon(svg_to_icon(SVG_NORMAL))
-                self.activated_state = False
+            # left click: toggle if engine running, else show settings
+            if self._app_win and self._app_win._hook:
+                self._app_win._hook.toggle()
             else:
-                self.setIcon(svg_to_icon(SVG_ACTIVATED))
-                self.activated_state = True
+                self._show_window()
+        elif reason == QSystemTrayIcon.ActivationReason.MiddleClick:
+            self._show_window()
 
 
 if __name__ == "__main__":
@@ -213,6 +311,7 @@ if __name__ == "__main__":
 
     tray = NypiaTray()
     win  = NypiaApp(tray)
+    tray.set_app_win(win)
     win.show()
 
     sys.exit(app.exec())
